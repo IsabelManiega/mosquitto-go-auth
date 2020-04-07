@@ -23,6 +23,7 @@ type Mongo struct {
 	Username        string
 	Password        string
 	DBName          string
+	AuthSource		string
 	UsersCollection string
 	AclsCollection  string
 	Conn            *mongo.Client
@@ -50,6 +51,7 @@ func NewMongo(authOpts map[string]string, logLevel log.Level) (Mongo, error) {
 		Username:        "",
 		Password:        "",
 		DBName:          "mosquitto",
+		AuthSource:		 "",
 		UsersCollection: "users",
 		AclsCollection:  "acls",
 	}
@@ -74,6 +76,10 @@ func NewMongo(authOpts map[string]string, logLevel log.Level) (Mongo, error) {
 		m.DBName = mongoDBName
 	}
 
+	if mongoAuthSource, ok := authOpts["mongo_authsource"]; ok {
+		m.AuthSource = mongoAuthSource
+	}
+
 	if usersCollection, ok := authOpts["mongo_users"]; ok {
 		m.UsersCollection = usersCollection
 	}
@@ -92,17 +98,26 @@ func NewMongo(authOpts map[string]string, logLevel log.Level) (Mongo, error) {
 	opts.ApplyURI(addr)
 
 	if m.Username != "" && m.Password != "" {
-		opts.Auth = &options.Credential{
-			AuthSource:  m.DBName,
-			Username:    m.Username,
-			Password:    m.Password,
-			PasswordSet: true,
+		if m.AuthSource != "" {
+			opts.Auth = &options.Credential{
+				AuthSource:  m.AuthSource,
+				Username:    m.Username,
+				Password:    m.Password,
+				PasswordSet: true,
+			}
+		} else {
+			opts.Auth = &options.Credential{
+				AuthSource:  m.DBName,
+				Username:    m.Username,
+				Password:    m.Password,
+				PasswordSet: true,
+			}
 		}
 	}
 
 	client, err := mongo.Connect(context.TODO(), &opts)
 	if err != nil {
-		return m, errors.Errorf("couldn't start mongo backend: %s", err)
+		return m, errors.Errorf("couldn't start mongo backend. error: %s\n", err)
 	}
 
 	m.Conn = client
@@ -172,9 +187,9 @@ func (o Mongo) CheckAcl(username, topic, clientid string, acc int32) bool {
 	//Now check common acls.
 
 	ac := o.Conn.Database(o.DBName).Collection(o.AclsCollection)
-	cur, err := ac.Find(context.TODO(), bson.M{"acc": bson.M{"$in": []int32{acc, 3}}})
+	cur, aErr := ac.Find(context.TODO(), bson.M{"acc": bson.M{"$in": []int32{acc, 3}}})
 
-	if err != nil {
+	if aErr != nil {
 		log.Debugf("Mongo check acl error: %s", err)
 		return false
 	}
@@ -207,9 +222,6 @@ func (o Mongo) GetName() string {
 //Halt closes the mongo session.
 func (o Mongo) Halt() {
 	if o.Conn != nil {
-		err := o.Conn.Disconnect(context.TODO())
-		if err != nil {
-			log.Errorf("mongo halt: %s", err)
-		}
+		o.Conn.Disconnect(context.TODO())
 	}
 }
